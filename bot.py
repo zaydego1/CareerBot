@@ -1,12 +1,16 @@
-import discord
 import os
-import random
+import asyncio
 
 from discord.ext import commands
-from secrets import credentials_dict
+from secret import credentials_dict
+from discord import Intents
 
+intents = Intents.default()
+intents.message_content = True  # For command processing
+intents.members = True  # For member events
+intents.presences = True
 
-bot = commands.Bot(command_prefix='-')
+bot = commands.Bot(command_prefix='-', intents=intents)
 
 @bot.event
 async def on_ready():
@@ -24,6 +28,8 @@ async def on_member_remove(member):
 async def on_command_error(ctx, error):
     if isinstance(error, commands.CommandNotFound):
         await ctx.send('Invalid command used. Use -help to see valid commands.')
+    else:
+        raise error
 
 @bot.command(help='Removes {num} messages from the chat')
 async def clean(ctx, amount: int):
@@ -37,26 +43,25 @@ async def clear_error(ctx, error):
 @bot.command(help='Enables {title} category')
 async def enable(ctx, ext):
     await ctx.send(f'Category "{ext.title()}" enabled.')
-    bot.load_extension(f'cogs.{ext}')
+    await bot.load_extension(f'cogs.{ext}')
 
 @bot.command(help='Disables {title} category')
 async def disable(ctx, ext):
     await ctx.send(f'Category "{ext.title()}" disabled.')
-    bot.unload_extension(f'cogs.{ext.lower()}')
+    await bot.unload_extension(f'cogs.{ext.lower()}')
 
 @bot.command(help='Reenables all categories')
 async def reset(ctx):
     await ctx.send(f'Reset to factory settings.')
-    ext_list = [ext for ext in os.listdir('Discord-Bot/cogs')]
+    ext_list = [ext for ext in os.listdir('/Users/isaiahjones/PycharmProjects/CareerBot/cogs')]
     for ext in ext_list:
-        bot.load_extension(f'cogs.{ext[:-3]}')
-
-for file_name in os.listdir('Discord-Bot/cogs'):
-    try:
-        if file_name.endswith('.py'):
-            bot.load_extension(f'cogs.{file_name[:-3]}')
-    except Exception as e:
-        print(e)
+        await bot.load_extension(f'cogs.{ext[:-3]}')
 
 def main():
-    bot.run(credentials_dict['token'])
+    async def runner():
+        await bot.load_extension('cogs.general')
+        await bot.load_extension('cogs.query')
+        await bot.load_extension('cogs.database')
+        await bot.load_extension('cogs.leetcode')
+        await bot.start(credentials_dict['token'])
+    asyncio.run(runner())
