@@ -1,13 +1,19 @@
 import os
+
 import pandas as pd
 import pickle
 import sqlite3
 import urllib.request
+import discord
 
-from bs4 import BeautifulSoup
+from selenium.webdriver.support import expected_conditions as EC
 from datetime import datetime as dt
 from discord.ext import commands
-
+from selenium import webdriver
+from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.wait import WebDriverWait
+from webdriver_manager.chrome import ChromeDriverManager
 
 class Query(commands.Cog):
     '''
@@ -17,10 +23,10 @@ class Query(commands.Cog):
 
     def __init__(self, bot):
         self.bot = bot
-        self.pickle_path = 'Discord-Bot/data/jobs.pickle'
-        self.db_path = 'Discord-Bot/data/indeed_jobs.db'
+        self.pickle_path = '/data/jobs.pickle'
+        self.db_path = '/data/indeed_jobs.db'
 
-    @commands.command(help='Input {"title/location/exp"} (entry/mid/senior)')
+    @commands.command(help='Input {"title/workplaceType/exp"} (Remote, Onsite, Hybrid)')
     # Primary command used to generate scrape query; stores results as pickle
     async def generate(self, ctx, criteria):
 
@@ -29,43 +35,102 @@ class Query(commands.Cog):
             return 'Improper format.'
 
         # Create BeautifulSoup object for scraping job data
-        title, location, exp = criteria.replace(' ', '+').split('/')
-        url = f'https://www.indeed.com/jobs?q={title}&l={location}&explvl={exp}_level'
-        soup = BeautifulSoup(urllib.request.urlopen(url).read(), 'html.parser')
-        soup = soup.find_all('div', attrs={'data-tn-component': 'organicJob'})
+        title, workplaceType, exp = criteria.replace(' ', '+').split('/')
+        workplaceType = workplaceType.split(',')
+        search_state = {
+            "searchQuery": title,
+            "physicalEnvironments": ["Office", "Industrial", "Customer-Facing"],
+            "workplaceTypes": workplaceType,
+            "seniorityLevel": [f"{exp} Level"]
+        }
+        encoded_state = urllib.parse.quote(str(search_state).replace("'", '"'))
+        url = f"https://hiring.cafe/?searchState={encoded_state}"
+        options = webdriver.ChromeOptions()
+        options.add_argument("--headless=new")  # Run in background
+        options.add_argument("--disable-blink-features=AutomationControlled")
+
+        service = Service(ChromeDriverManager().install())
+        driver = webdriver.Chrome(service=service, options=options)
+        driver.get(url)
 
         print('Soup cooked.')
 
-        # Appending scraped job data into list of lists and converting into pd.DataFrame
-        jobs_list = []
-        for posting in soup:
-            job = posting.find(
-                'a', attrs={'data-tn-element': 'jobTitle'}).text.strip()
-            company = posting.find(
-                'span', attrs={'class': 'company'}).text.strip()
-            location = posting.find('span', attrs={
-                'class': 'location accessible-contrast-color-location'}).text.strip()
-            url = posting.find(
-                'a', attrs={'class': 'turnstileLink'}).attrs['href']
+        # Wait for the job grid to load
+        driver.implicitly_wait(10)
 
-            jobs_list.append([job, company, location, url])
+        try:
+            job_grid = WebDriverWait(driver, 10).until(
+                EC.presence_of_element_located((By.CSS_SELECTOR, ".grid.grid-cols-1"))
+            )
+            listings = job_grid.find_elements(By.CLASS_NAME, "relative")
+            jobs = []
+            data = []
 
-        print('Indeed scraped.')
+            for job in listings:
+                job_info = job.text.split('\n')
 
-        if not jobs_list:
-            await ctx.send('No results found; please review your query.')
-            return 'No results found.'
+                title = job_info[1] if len(job_info) > 1 else None
+                location = job_info[2] if len(job_info) > 2 else None
+                salary = job_info[3] if len(job_info) > 3 else None
+                workplace_type = job_info[4] if len(job_info) > 4 else None
+                company = job_info[6] if len(job_info) > 6 else None
+                link = job.find_elements(By.XPATH, '//a[contains(@class, "text-pink-600/50")]')[0].get_attribute(
+                    "href") if job.find_elements(By.XPATH, '//a[contains(@class, "text-pink-600/50")]') else None
+                jobs.append({
+                    "Title": title if title else None,
+                    "Company": company if company else None,
+                    "Location": location if location else None,
+                    "Salary": salary if salary else None,
+                    "Workplace Type": workplace_type if workplace_type else None,
+                    "URL": link if link else None
+                })
 
-        jobs_df = pd.DataFrame(jobs_list, columns=[
-                               'Title', 'Company', 'Location', 'URL'])
+            data = jobs
+
+        except Exception as e:
+                await ctx.send('Error parsing jobs data.')
+                return f'Parsing error: {e}'
+
+        if not data:
+            await ctx.send('No jobs found that meet your criteria.')
+            return 'No jobs found.'
+        # Create pandas DataFrame from scraped data
+        jobs_df_pre_transform = pd.DataFrame(data).fillna('')
 
         print('Dataframe generated.')
 
-        await ctx.send(f'{jobs_df.shape[0]} jobs found that meet your critera:')
+        await ctx.send(f'{jobs_df_pre_transform.shape[0]} jobs found that meet your critera:')
         await ctx.send('- - -')
+        await ctx.send('Sending first few results...')
 
-        for i, row in jobs_df.iterrows():
-            await ctx.send(f"{i+1}: {row['Title']} - {row['Company']}")
+        jobs_df = jobs_df_pre_transform.drop_duplicates(subset=['Title', 'Company', 'Location', 'Salary', 'Workplace Type', 'URL'])
+        jobs_df = jobs_df.reset_index(drop=True)
+        if jobs_df.shape[0] > 5:
+            for i in range(5):
+                title = jobs_df.loc[i]['Title']
+                company = jobs_df.loc[i]['Company']
+                location = jobs_df.loc[i]['Location']
+                salary = jobs_df.loc[i]['Salary']
+                workplace_type = jobs_df.loc[i]['Workplace Type']
+                embed = discord.Embed(
+                    title=f'{title} | {salary} | {workplace_type}',
+                    url=f"{jobs_df['URL'].iloc[i]}",
+                    description=f"Company: {company}\nLocation: {location}\n\nHere's the link to your new job!"
+                )
+                await ctx.send(embed=embed)
+        else:
+            for i in range(jobs_df.shape[0]):
+                title = jobs_df.loc[i]['Title']
+                company = jobs_df.loc[i]['Company']
+                location = jobs_df.loc[i]['Location']
+                salary = jobs_df.loc[i]['Salary']
+                workplace_type = jobs_df.loc[i]['Workplace Type']
+                embed = discord.Embed(
+                    title=f'{title} | {salary} | {workplace_type}',
+                    url=f"{jobs_df['URL'].iloc[i]}",
+                    description=f"Company: {company}\nLocation: {location}\n\nHere's the link to your new job!"
+                )
+                await ctx.send(embed=embed)
 
         await ctx.send('- - -')
         await ctx.send('Utilize -url or -save to view or store individual postings, respectively.')
@@ -136,5 +201,5 @@ class Query(commands.Cog):
             await ctx.send('Please specify the index of the saved job.')
 
 
-def setup(bot):
-    bot.add_cog(Query(bot))
+async def setup(bot):
+    await bot.add_cog(Query(bot))

@@ -1,5 +1,4 @@
 import csv
-import discord
 import json
 import random
 
@@ -13,9 +12,9 @@ class General(commands.Cog):
 
     def __init__(self, bot):
         self.bot = bot
-        self.responses = json.load(open('Discord-Bot/data/responses.json'))
+        self.responses = json.load(open('/data/responses.json'))
 
-        with open('Discord-Bot/data/motivational_quotes.csv', 'r') as f:
+        with open('/data/motivational_quotes.csv', 'r') as f:
             reader = csv.reader(f, delimiter=',')
             quotes = [quote for quote in list(reader)[0]]
             self.quotes = quotes
@@ -35,6 +34,5 @@ class General(commands.Cog):
         responses = self.quotes
         await ctx.send(f'{random.choice(responses)}')
 
-
-def setup(bot):
-    bot.add_cog(General(bot))
+async def setup(bot):
+    await bot.add_cog(General(bot))

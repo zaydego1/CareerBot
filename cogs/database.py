@@ -13,8 +13,8 @@ class Database(commands.Cog):
 
     def __init__(self, bot):
         self.bot = bot
-        self.db_path = 'Discord-Bot/data/indeed_jobs.db'
-        self.pickle_path = 'Discord-Bot/data/database.pickle'
+        self.db_path = '/data/indeed_jobs.db'
+        self.pickle_path = '/data/jobs.pickle'
 
     @commands.command(help='View saved jobs; run before other db_functions')
     async def db_refresh(self, ctx):
@@ -30,9 +30,9 @@ class Database(commands.Cog):
 
         jobs_list = []
         for i, job in enumerate(c.fetchall()):
-            title, company, location, url, user, date = job
+            title, company, location, salary, workplace_type, url, user= job
             await ctx.send(f'{i+1}: {title} - {company} - {location}')
-            jobs_list.append([title, company, location, url, user, date])
+            jobs_list.append([title, company, location, salary, workplace_type, url, user])
 
         await ctx.send('- - -')
 
@@ -40,7 +40,7 @@ class Database(commands.Cog):
         conn.close()
 
         jobs_df = pd.DataFrame(jobs_list, columns=[
-                               'Title', 'Company', 'Location', 'URL', 'User', 'Date']
+                               'Title', 'Company', 'Location', 'Salary', 'Workplace Type', 'URL', 'User']
         )
 
         pickle_out = open(self.pickle_path, 'wb')
@@ -53,7 +53,7 @@ class Database(commands.Cog):
             pickle_in = open(self.pickle_path, 'rb')
             jobs_df = pickle.load(pickle_in)
             job_url = jobs_df['URL'].iloc[int(index)-1]
-            await ctx.send(f'https://www.indeed.com{job_url}')
+            await ctx.send(f'{job_url}')
 
         except FileNotFoundError:
             await ctx.send('Please use -db_refresh before conducting any database operations.')
@@ -112,5 +112,5 @@ class Database(commands.Cog):
         await ctx.send('Database cleared.')
 
 
-def setup(bot):
-    bot.add_cog(Database(bot))
+async def setup(bot):
+    await bot.add_cog(Database(bot))
